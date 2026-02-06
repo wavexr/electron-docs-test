@@ -7,9 +7,9 @@ import dotenv from 'dotenv';
 // Prevent EPIPE errors from crashing the app when stdout/stderr pipe breaks
 process.stdout?.on?.('error', () => {});
 process.stderr?.on?.('error', () => {});
-import { getSheetTabs, getSheetData, updateCell } from './google-sheets';
+import { getSheetTabs, getSheetData, updateCell, appendRow, getCellValue, getNextReceiptId, findReceiptsTab } from './google-sheets';
 import { getDocContent } from './google-docs';
-import { analyzeData } from './llm';
+import { analyzeData, modifyRecommendation } from './llm';
 
 // Load environment variables from .env file
 // Try multiple locations to support both dev and packaged app
@@ -78,6 +78,42 @@ ipcMain.handle('update-cell', async (_event, tab: string, range: string, value: 
 
 ipcMain.handle('analyze-data', async () => {
   return await analyzeData();
+});
+
+ipcMain.handle('modify-recommendation', async (_event, rec, userNotes: string) => {
+  return await modifyRecommendation(rec, userNotes);
+});
+
+ipcMain.handle('append-receipt', async (_event, receipt) => {
+  const tabName = await findReceiptsTab();
+  if (!tabName) {
+    return { success: false, error: 'Receipts tab not found in spreadsheet' };
+  }
+  const values = [
+    receipt.receiptId ?? '',
+    receipt.timestamp ?? '',
+    receipt.recommendationId ?? '',
+    receipt.recommendationTitle ?? '',
+    receipt.category ?? '',
+    receipt.tab ?? '',
+    receipt.cell ?? '',
+    receipt.originalValue ?? '',
+    receipt.newValue ?? '',
+    receipt.modificationNotes ?? '',
+    receipt.wasModified ?? '',
+    receipt.sourceReferences ?? '',
+    receipt.appliedBy ?? '',
+    receipt.status ?? '',
+  ];
+  return await appendRow(tabName, values);
+});
+
+ipcMain.handle('get-cell-value', async (_event, tab: string, range: string) => {
+  return await getCellValue(tab, range);
+});
+
+ipcMain.handle('get-next-receipt-id', async () => {
+  return await getNextReceiptId();
 });
 
 app.on('ready', createWindow);

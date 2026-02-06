@@ -28,7 +28,26 @@ export interface Recommendation {
   id: string;
   title: string;
   description: string;
+  category: string;
+  sourceReferences?: string[];
   action: RecommendationAction;
+}
+
+export interface ReceiptRow {
+  receiptId: string;
+  timestamp: string;
+  recommendationId: string;
+  recommendationTitle: string;
+  category: string;
+  tab: string;
+  cell: string;
+  originalValue: string;
+  newValue: string;
+  modificationNotes: string;
+  wasModified: string;
+  sourceReferences: string;
+  appliedBy: string;
+  status: string;
 }
 
 export interface AnalysisResult {
@@ -43,6 +62,10 @@ export interface ElectronAPI {
   getDocContent: () => Promise<DocContent | null>;
   updateCell: (tab: string, range: string, value: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   analyzeData: () => Promise<AnalysisResult>;
+  modifyRecommendation: (rec: Recommendation, userNotes: string) => Promise<{ tab: string; range: string; newValue: string } | { error: string }>;
+  appendReceipt: (receipt: ReceiptRow) => Promise<{ success: boolean; error?: string }>;
+  getCellValue: (tab: string, range: string) => Promise<{ value: string; error?: string }>;
+  getNextReceiptId: () => Promise<{ receiptId: string; error?: string }>;
 }
 
 declare global {

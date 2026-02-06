@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import '../preload/types.d';
 
 interface SheetData {
@@ -21,6 +21,8 @@ interface Recommendation {
   id: string;
   title: string;
   description: string;
+  category: string;
+  sourceReferences?: string[];
   action: {
     tab: string;
     range: string;
@@ -43,6 +45,9 @@ interface RecCardState {
   loading?: boolean;
   applied?: boolean;
   error?: string;
+  modificationNotes?: string;
+  modifying?: boolean;
+  modifiedAction?: { tab: string; range: string; newValue: string };
 }
 
 function App() {
@@ -58,6 +63,7 @@ function App() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [recStates, setRecStates] = useState<Record<string, RecCardState>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [highlightedCells, setHighlightedCells] = useState<Set<string>>(new Set());
   let toastCounter = React.useRef(0);
 
   useEffect(() => {
@@ -135,6 +141,31 @@ function App() {
     setError(null);
   };
 
+  // Convert range like "B5" to { row, col } (0-indexed, row relative to data rows not header)
+  const parseRange = (range: string): { row: number; col: number } | null => {
+    const match = range.match(/^([A-Z]+)(\d+)$/i);
+    if (!match) return null;
+    const colStr = match[1].toUpperCase();
+    const rowNum = parseInt(match[2], 10);
+    let col = 0;
+    for (let i = 0; i < colStr.length; i++) {
+      col = col * 26 + (colStr.charCodeAt(i) - 64);
+    }
+    // row 1 is the header, so data row 0 = spreadsheet row 2
+    return { row: rowNum - 2, col: col - 1 };
+  };
+
+  const isCellHighlighted = (rowIndex: number, colIndex: number): boolean => {
+    const cellKey = `${activeTab}:`;
+    for (const key of highlightedCells) {
+      if (!key.startsWith(cellKey)) continue;
+      const range = key.slice(cellKey.length);
+      const parsed = parseRange(range);
+      if (parsed && parsed.row === rowIndex && parsed.col === colIndex) return true;
+    }
+    return false;
+  };
+
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
@@ -147,26 +178,116 @@ function App() {
     }, 3000);
   };
 
-  const handleApply = async (rec: Recommendation) => {
-    setRecStates((prev) => ({ ...prev, [rec.id]: { loading: true } }));
+  const setModificationNotes = (recId: string, notes: string) => {
+    setRecStates((prev) => ({
+      ...prev,
+      [recId]: { ...prev[recId], modificationNotes: notes },
+    }));
+  };
 
-    const result = await window.electronAPI.updateCell(
-      rec.action.tab,
-      rec.action.range,
-      rec.action.newValue
-    );
+  const groupedRecommendations = useMemo(() => {
+    if (!analysis?.recommendations) return {};
+    const groups: Record<string, Recommendation[]> = {};
+    for (const rec of analysis.recommendations) {
+      const cat = rec.category || 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(rec);
+    }
+    return groups;
+  }, [analysis?.recommendations]);
 
-    if (result.success) {
-      setRecStates((prev) => ({ ...prev, [rec.id]: { applied: true } }));
-      addToast(`Updated ${rec.action.tab} ${rec.action.range} successfully`);
-      // Auto-refresh the affected tab data
-      if (activeTab === rec.action.tab) {
-        loadSheetData(rec.action.tab);
+  const handleModify = async (rec: Recommendation) => {
+    const state = recStates[rec.id] || {};
+    const notes = (state.modificationNotes || '').trim();
+    if (!notes) return;
+
+    setRecStates((prev) => ({ ...prev, [rec.id]: { ...prev[rec.id], modifying: true, error: undefined } }));
+
+    try {
+      const modResult = await window.electronAPI.modifyRecommendation(rec, notes);
+      if ('error' in modResult) {
+        setRecStates((prev) => ({
+          ...prev,
+          [rec.id]: { ...prev[rec.id], modifying: false, error: modResult.error },
+        }));
+        return;
       }
-    } else {
       setRecStates((prev) => ({
         ...prev,
-        [rec.id]: { error: result.error || 'Update failed' },
+        [rec.id]: { ...prev[rec.id], modifying: false, modifiedAction: modResult },
+      }));
+      addToast(`Action for "${rec.title}" modified by Haiku`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRecStates((prev) => ({
+        ...prev,
+        [rec.id]: { ...prev[rec.id], modifying: false, error: message },
+      }));
+    }
+  };
+
+  const handleApply = async (rec: Recommendation) => {
+    const state = recStates[rec.id] || {};
+    const notes = state.modificationNotes || '';
+    const finalAction = state.modifiedAction || rec.action;
+    const wasModified = !!state.modifiedAction;
+    setRecStates((prev) => ({ ...prev, [rec.id]: { ...prev[rec.id], loading: true } }));
+
+    try {
+      // 1. Read current cell value for receipt's Original Value
+      const cellResult = await window.electronAPI.getCellValue(finalAction.tab, finalAction.range);
+      const originalValue = cellResult.value || '';
+
+      // 2. Call updateCell with current action (original or already-modified)
+      const result = await window.electronAPI.updateCell(
+        finalAction.tab,
+        finalAction.range,
+        finalAction.newValue
+      );
+
+      if (result.success) {
+        // 3. Generate receipt
+        const receiptIdResult = await window.electronAPI.getNextReceiptId();
+        const receipt = {
+          receiptId: receiptIdResult.receiptId,
+          timestamp: new Date().toISOString(),
+          recommendationId: rec.id,
+          recommendationTitle: rec.title,
+          category: rec.category || 'Other',
+          tab: finalAction.tab,
+          cell: finalAction.range,
+          originalValue,
+          newValue: finalAction.newValue,
+          modificationNotes: notes,
+          wasModified: wasModified ? 'Yes' : 'No',
+          sourceReferences: (rec.sourceReferences || []).join('; '),
+          appliedBy: 'User',
+          status: 'Applied',
+        };
+        const receiptResult = await window.electronAPI.appendReceipt(receipt);
+        if (receiptResult.error) {
+          console.warn('Receipt write failed:', receiptResult.error);
+        }
+
+        // 4. Update UI
+        setRecStates((prev) => ({ ...prev, [rec.id]: { applied: true } }));
+        addToast(`Updated ${finalAction.tab} ${finalAction.range} successfully`);
+        const cellKey = `${finalAction.tab}:${finalAction.range}`;
+        setHighlightedCells((prev) => new Set(prev).add(cellKey));
+        if (activeTab === finalAction.tab) {
+          loadSheetData(finalAction.tab);
+        }
+      } else {
+        setRecStates((prev) => ({
+          ...prev,
+          [rec.id]: { ...prev[rec.id], loading: false, error: result.error || 'Update failed' },
+        }));
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRecStates((prev) => ({
+        ...prev,
+        [rec.id]: { ...prev[rec.id], loading: false, error: message },
       }));
     }
   };
@@ -282,7 +403,7 @@ function App() {
                   {sheetData.rows.map((row, rowIndex) => (
                     <tr key={rowIndex}>
                       {row.map((cell, cellIndex) => (
-                        <td key={cellIndex}>{cell}</td>
+                        <td key={cellIndex} className={isCellHighlighted(rowIndex, cellIndex) ? 'cell-updated' : ''}>{cell}</td>
                       ))}
                     </tr>
                   ))}
@@ -324,43 +445,85 @@ function App() {
                 </div>
 
                 <h3>Recommendations</h3>
-                <div className="rec-cards">
-                  {analysis.recommendations.map((rec) => {
-                    const state = recStates[rec.id] || {};
-                    return (
-                      <div key={rec.id} className={`rec-card ${state.applied ? 'rec-card-applied' : ''}`}>
-                        <div className="rec-card-body">
-                          <h4>{rec.title}</h4>
-                          <p>{rec.description}</p>
-                          <span className="rec-action-label">
-                            Action: Set {rec.action.tab} {rec.action.range} to &quot;{rec.action.newValue}&quot;
-                          </span>
-                          {state.error && (
-                            <div className="rec-error">{state.error}</div>
-                          )}
-                        </div>
-                        {state.applied ? (
-                          <span className="rec-applied">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="20 6 9 17 4 12"/>
-                            </svg>
-                            Applied!
-                          </span>
-                        ) : (
-                          <button
-                            className="btn btn-primary btn-sm"
-                            disabled={state.loading}
-                            onClick={() => handleApply(rec)}
-                          >
-                            {state.loading ? (
-                              <div className="spinner-small" />
-                            ) : 'Apply'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                {Object.entries(groupedRecommendations).map(([category, recs]) => (
+                  <div key={category} className="rec-group">
+                    <div className="rec-group-header">
+                      <span className="rec-group-title">{category}</span>
+                      <span className="rec-group-count">{recs.length}</span>
+                    </div>
+                    <div className="rec-cards">
+                      {recs.map((rec) => {
+                        const state = recStates[rec.id] || {};
+                        return (
+                          <div key={rec.id} className={`rec-card ${state.applied ? 'rec-card-applied' : ''}`}>
+                            <div className="rec-card-body">
+                              <h4>{rec.title}</h4>
+                              <p>{rec.description}</p>
+                              {rec.sourceReferences && rec.sourceReferences.length > 0 && (
+                                <div className="rec-sources">
+                                  {rec.sourceReferences.map((src, i) => (
+                                    <span key={i} className="rec-source-tag">{src}</span>
+                                  ))}
+                                </div>
+                              )}
+                              <span className="rec-action-label">
+                                Action: Set {(state.modifiedAction || rec.action).tab} {(state.modifiedAction || rec.action).range} to &quot;{(state.modifiedAction || rec.action).newValue}&quot;
+                              </span>
+                              {state.modifiedAction && !state.applied && (
+                                <span className="rec-modified-badge">Modified</span>
+                              )}
+                              {!state.applied && (
+                                <div className="rec-modification">
+                                  <label className="rec-modification-label">Modification notes</label>
+                                  <div className="rec-modification-row">
+                                    <input
+                                      className="rec-modification-input"
+                                      type="text"
+                                      placeholder="e.g. Change assignee to Jane instead"
+                                      value={state.modificationNotes || ''}
+                                      onChange={(e) => setModificationNotes(rec.id, e.target.value)}
+                                      disabled={state.loading || state.modifying}
+                                    />
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      disabled={state.loading || state.modifying || !(state.modificationNotes || '').trim()}
+                                      onClick={() => handleModify(rec)}
+                                    >
+                                      {state.modifying ? (
+                                        <div className="spinner-small spinner-dark" />
+                                      ) : 'Modify'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              {state.error && (
+                                <div className="rec-error">{state.error}</div>
+                              )}
+                            </div>
+                            {state.applied ? (
+                              <span className="rec-applied">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                                Applied!
+                              </span>
+                            ) : (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                disabled={state.loading}
+                                onClick={() => handleApply(rec)}
+                              >
+                                {state.loading ? (
+                                  <div className="spinner-small" />
+                                ) : 'Apply'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
           </div>

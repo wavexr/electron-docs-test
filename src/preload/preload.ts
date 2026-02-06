@@ -8,4 +8,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateCell: (tab: string, range: string, value: string) =>
     ipcRenderer.invoke('update-cell', tab, range, value),
   analyzeData: () => ipcRenderer.invoke('analyze-data'),
+  modifyRecommendation: (rec: unknown, userNotes: string) =>
+    ipcRenderer.invoke('modify-recommendation', rec, userNotes),
+  appendReceipt: (receipt: unknown) =>
+    ipcRenderer.invoke('append-receipt', receipt),
+  getCellValue: (tab: string, range: string) =>
+    ipcRenderer.invoke('get-cell-value', tab, range),
+  getNextReceiptId: () =>
+    ipcRenderer.invoke('get-next-receipt-id'),
 });
