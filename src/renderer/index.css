@@ -74,6 +74,30 @@ body {
   color: hsl(var(--foreground));
 }
 
+/* ---- Splash screen ---- */
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: hsl(var(--background));
+  transition: opacity 1.2s ease;
+}
+
+.splash-screen.splash-fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.splash-logo {
+  max-width: 80%;
+  max-height: 80%;
+  object-fit: contain;
+  border-radius: 16px;
+}
+
 /* ---- Layout ---- */
 .app {
   max-width: 100%;
@@ -92,6 +116,19 @@ body {
   border-bottom: 1px solid hsl(var(--border));
 }
 
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
 .header h1 {
   font-size: 18px;
   font-weight: 700;
@@ -102,6 +139,31 @@ body {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+.btn-logo-spin {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: cover;
+  animation: spin 0.7s linear infinite;
+}
+
+.analysis-logo-static {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.analysis-loading-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 26px;
+  font-weight: 700;
+  color: hsl(var(--foreground));
 }
 
 /* ---- Buttons ---- */

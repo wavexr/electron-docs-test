@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import '../preload/types.d';
+import logoImg from '../../images/qurolator 2.png';
+import splashAudio from '../../images/correlate audio.m4a';
 
 interface SheetData {
   headers: string[];
@@ -51,6 +53,8 @@ interface RecCardState {
 }
 
 function App() {
+  const [splash, setSplash] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
   const [tabs, setTabs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
   const [sheetData, setSheetData] = useState<SheetData | null>(null);
@@ -68,6 +72,8 @@ function App() {
 
   useEffect(() => {
     loadInitialData();
+    const audio = new Audio(splashAudio);
+    audio.play().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -98,6 +104,10 @@ function App() {
     setDocContent(docResult);
     setLastRefreshed(new Date());
     setLoading(false);
+
+    // Dismiss splash screen
+    setSplashFading(true);
+    setTimeout(() => setSplash(false), 1200);
   };
 
   const loadSheetData = async (tabName: string) => {
@@ -324,8 +334,16 @@ function App() {
 
   return (
     <div className="app">
+      {splash && (
+        <div className={`splash-screen ${splashFading ? 'splash-fade-out' : ''}`}>
+          <img src={logoImg} alt="Qoralator" className="splash-logo" />
+        </div>
+      )}
       <header className="header">
-        <h1>Dashboard</h1>
+        <div className="header-brand">
+          <img src={logoImg} alt="Qoralator" className="header-logo" />
+          <h1>Qoralator Dashboard</h1>
+        </div>
         <div className="header-actions">
           <button className="btn btn-secondary" onClick={handleRefresh} disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -336,8 +354,8 @@ function App() {
           <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
             {analyzing ? (
               <>
-                <div className="spinner-small" />
-                Analyzing...
+                <img src={logoImg} alt="" className="btn-logo-spin" />
+                Qoralating...
               </>
             ) : 'Analyze'}
           </button>
@@ -432,8 +450,11 @@ function App() {
 
             {analyzing ? (
               <div className="analysis-loading">
-                <div className="spinner" />
-                <p className="loading-text">Analyzing your data with Claude...</p>
+                <img src={logoImg} alt="" className="analysis-logo-static" />
+                <div className="analysis-loading-text">
+                  <span>Qoralating your data...</span>
+                  <div className="spinner" />
+                </div>
               </div>
             ) : analysis?.error ? (
               <div className="error-message">{analysis.error}</div>

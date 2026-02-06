@@ -54,8 +54,10 @@ const createWindow = () => {
     );
   }
 
-  // Open DevTools in development
-  mainWindow.webContents.openDevTools();
+  // Open DevTools only when explicitly requested via --devtools flag
+  if (process.argv.includes('--devtools')) {
+    mainWindow.webContents.openDevTools();
+  }
 };
 
 // IPC Handlers
